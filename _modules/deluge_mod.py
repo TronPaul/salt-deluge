@@ -4,6 +4,7 @@ Execution module to provide deluge configuration to Salt
 .. versionadded:: 2015.8.0
 '''
 from salt.defaults import DEFAULT_TARGET_DELIM
+from salt.exceptions import CommandExecutionError
 
 try:
     # welcome to callback hell
@@ -13,6 +14,10 @@ try:
 except ImportError:
     HAS_DELUGE = False
 
+
+__virtualname__ = 'deluge'
+
+
 def __virtual__():
     '''
     Only load if deluge libraries exist.
@@ -20,7 +25,7 @@ def __virtual__():
     if not HAS_DELUGE:
         return False
     else:
-        return 'deluge'
+        return __virtualname__
 
 def _close_conn():
     client.disconnect()
@@ -44,7 +49,7 @@ def _set_config_value(client, key, value, f):
     client.core.set_config({key: value}).addCallback(f)
 
 
-def get_config_value(key, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username=None, password=None):
+def get_config_value(key, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username='', password=''):
     # Wishing nonlocal were here
     rv = {}
     def on_completion(value):
@@ -64,11 +69,13 @@ def get_config_value(key, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port
     _run_conn()
     if 'rv' in rv:
         return rv['rv']
-    #else:
-    #???
+    elif 'error' in rv:
+        raise CommandExecutionError(rv['error'])
+    else:
+        raise CommandExecutionError('Something unexpected ocurred')
 
 
-def set_config_value(key, value, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username=None, password=None):
+def set_config_value(key, value, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username='', password=''):
     rv = {}
     def on_completion(*args):
         rv['rv'] = True
@@ -85,3 +92,9 @@ def set_config_value(key, value, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1
         _close_conn()
     c.addErrback(on_fail)
     _run_conn()
+    if 'rv' in rv:
+        return rv['rv']
+    elif 'error' in rv:
+        raise CommandExecutionError(rv['error'])
+    else:
+        raise CommandExecutionError('Something unexpected ocurred')
