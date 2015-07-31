@@ -6,10 +6,13 @@ Execution module to provide deluge configuration to Salt
 from salt.defaults import DEFAULT_TARGET_DELIM
 from salt.exceptions import CommandExecutionError
 
+
 try:
     # welcome to callback hell
     from twisted.internet import reactor
     from deluge.ui.client import client
+    import deluge.configmanager
+    from deluge.ui.common import get_localhost_auth
     HAS_DELUGE = True
 except ImportError:
     HAS_DELUGE = False
@@ -27,14 +30,22 @@ def __virtual__():
     else:
         return __virtualname__
 
+
+def _get_auth(config_dir):
+    deluge.configmanager.set_config_dir(config_dir)
+    return get_localhost_auth()
+
+
 def _close_conn():
     client.disconnect()
     reactor.stop()
 
+
 def _run_conn():
     reactor.run()
 
-def _set_nested_config_value(client, key, value, delimiter, f):
+
+def _set_nested_config_value(key, value, delimiter, f):
     keys = key.split(delimiter)
     def on_get_config_value(top_level_value, key):
         data = top_level_value
@@ -45,27 +56,28 @@ def _set_nested_config_value(client, key, value, delimiter, f):
     client.core.get_config_value(key).addCallback(on_get_config_value, key)
 
 
-def _set_config_value(client, key, value, f):
+def _set_config_value(key, value, f):
     client.core.set_config({key: value}).addCallback(f)
 
 
-def get_config_value(key, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username='', password=''):
+def get_config_value(key, config_dir=None, delimiter=DEFAULT_TARGET_DELIM):
     # Wishing nonlocal were here
     rv = {}
+    username, password = _get_auth(config_dir)
     def on_completion(value):
         if delimiter in key:
             rv['rv'] = traverse_dict(value, key.split(':', 1)[1], None, delimiter)
         else:
             rv['rv'] = value
         _close_conn()
-    c = client.connect(host=host, port=port, username=username, password=password)
+    d = client.connect(username=username, password=password)
     def on_connect(*args):
         client.core.get_config_value(key).addCallback(on_completion)
-    c.addCallback(on_connect)
+    d.addCallback(on_connect)
     def on_fail(result):
         rv['error'] = result
         _close_conn()
-    c.addErrback(on_fail)
+    d.addErrback(on_fail)
     _run_conn()
     if 'rv' in rv:
         return rv['rv']
@@ -75,22 +87,24 @@ def get_config_value(key, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port
         raise CommandExecutionError('Something unexpected ocurred')
 
 
-def set_config_value(key, value, delimiter=DEFAULT_TARGET_DELIM, host='127.0.0.1', port=58846, username='', password=''):
+def set_config_value(key, value, config_dir=None, delimiter=DEFAULT_TARGET_DELIM):
+    # Wishing nonlocal were here
     rv = {}
+    username, password = _get_auth(config_dir)
     def on_completion(*args):
         rv['rv'] = True
         _close_conn()
-    c = client.connect(host=host, port=port, username=username, password=password)
+    d = client.connect(username=username, password=password)
     def on_connect(*args):
         if delimiter in key:
-            _set_nested_config_value(c, key, value, delimiter, on_completion)
+            _set_nested_config_value(key, value, delimiter, on_completion)
         else:
-            _set_config_value(c, key, value, on_completion)
-    c.addCallback(on_connect)
+            _set_config_value(key, value, on_completion)
+    d.addCallback(on_connect)
     def on_fail(result):
         rv['error'] = result
         _close_conn()
-    c.addErrback(on_fail)
+    d.addErrback(on_fail)
     _run_conn()
     if 'rv' in rv:
         return rv['rv']
